@@ -1,0 +1,148 @@
+x-processing-service: &processing-service
+  build:
+    context: .
+    dockerfile: services/processing-service/Dockerfile
+  depends_on:
+    kafka:
+      condition: service_healthy
+    kafka-init:
+      condition: service_completed_successfully
+    postgres:
+      condition: service_healthy
+  env_file:
+    - services/processing-service/.env.docker
+
+services:
+  kafka:
+    image: apache/kafka:4.0.0
+    container_name: edt-kafka
+    ports:
+      - "9092:9092" # host clients -> localhost:9092
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      CLUSTER_ID: 5L6g3nShT-eMCtK--X86sw
+      # three listeners: EXTERNAL for host, BROKER for in-network, CONTROLLER for KRaft
+      KAFKA_LISTENERS: BROKER://0.0.0.0:19092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: BROKER://kafka:19092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: BROKER:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: BROKER
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false" # topics are created explicitly by kafka-init
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+
+  # create the demo topics with 3 partitions, then exit
+  kafka-init:
+    image: apache/kafka:4.0.0
+    container_name: edt-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        for t in order.created order.processed order.created.dlq; do
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 \
+            --create --if-not-exists --topic "$$t" --partitions 3 --replication-factor 1
+        done
+        echo "topics:"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --list
+    restart: "no"
+
+  kafka-ui:
+    image: kafbat/kafka-ui:latest
+    container_name: edt-kafka-ui
+    ports:
+      - "8080:8080" # http://localhost:8080
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
+      DYNAMIC_CONFIG_ENABLED: "true"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: edt-postgres
+    ports:
+      - "5432:5432" # host clients -> localhost:5432
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  processing-service-1:
+    <<: *processing-service
+    container_name: edt-processing-service-1
+    environment:
+      INSTANCE_ID: instance-1
+
+  processing-service-2:
+    <<: *processing-service
+    container_name: edt-processing-service-2
+    environment:
+      INSTANCE_ID: instance-2
+
+  processing-service-3:
+    <<: *processing-service
+    container_name: edt-processing-service-3
+    environment:
+      INSTANCE_ID: instance-3
+
+  order-service:
+    build:
+      context: .
+      dockerfile: services/order-service/Dockerfile
+    container_name: edt-order-service
+    ports:
+      - "3000:3000" # http://localhost:3000/api_doc
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    env_file:
+      - services/order-service/.env.docker
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: services/notification-service/Dockerfile
+    container_name: edt-notification-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    env_file:
+      - services/notification-service/.env.docker
+
+volumes:
+  pgdata:
