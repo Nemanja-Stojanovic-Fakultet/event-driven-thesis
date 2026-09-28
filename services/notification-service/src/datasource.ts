@@ -3,7 +3,9 @@ import { DataSource } from "typeorm";
 
 export default new DataSource({
   type: "postgres",
-  url: "postgres://postgres:postgres@localhost:5432/notifications_db",
+  url:
+    process.env.DATABASE_URL ??
+    "postgres://postgres:postgres@localhost:5432/notifications_db",
   logging: ["error", "schema"],
   synchronize: false,
   entities: [`./**/*.entity.ts`],

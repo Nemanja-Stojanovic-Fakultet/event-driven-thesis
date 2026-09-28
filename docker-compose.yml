@@ -9,6 +9,8 @@ x-processing-service: &processing-service
       condition: service_completed_successfully
     postgres:
       condition: service_healthy
+    processing-service-migrate:
+      condition: service_completed_successfully
   env_file:
     - services/processing-service/.env.docker
 
@@ -94,6 +96,21 @@ services:
       timeout: 5s
       retries: 10
 
+  processing-service-migrate:
+    build:
+      context: .
+      dockerfile: services/processing-service/Dockerfile
+      target: build
+    container_name: edt-processing-service-migrate
+    working_dir: /app/services/processing-service
+    command: ["npm", "run", "migration:run"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - services/processing-service/.env.docker
+    restart: "no"
+
   processing-service-1:
     <<: *processing-service
     container_name: edt-processing-service-1
@@ -112,6 +129,21 @@ services:
     environment:
       INSTANCE_ID: instance-3
 
+  order-service-migrate:
+    build:
+      context: .
+      dockerfile: services/order-service/Dockerfile
+      target: build
+    container_name: edt-order-service-migrate
+    working_dir: /app/services/order-service
+    command: ["npm", "run", "migration:run"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - services/order-service/.env.docker
+    restart: "no"
+
   order-service:
     build:
       context: .
@@ -126,8 +158,25 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      order-service-migrate:
+        condition: service_completed_successfully
     env_file:
       - services/order-service/.env.docker
+
+  notification-service-migrate:
+    build:
+      context: .
+      dockerfile: services/notification-service/Dockerfile
+      target: build
+    container_name: edt-notification-service-migrate
+    working_dir: /app/services/notification-service
+    command: ["npm", "run", "migration:run"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - services/notification-service/.env.docker
+    restart: "no"
 
   notification-service:
     build:
@@ -141,6 +190,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      notification-service-migrate:
+        condition: service_completed_successfully
     env_file:
       - services/notification-service/.env.docker
 
